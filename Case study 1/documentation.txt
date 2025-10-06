@@ -1,0 +1,227 @@
+ 🧾 ETL Pipeline Documentation
+
+---
+
+ 1️⃣ Approach Overview
+
+The goal of this ETL (Extract–Transform–Load) pipeline is to process retail transactional data (sales, products, inventory, stores) to generate an integrated dataset and produce analytical outputs such as:
+
+ Sales by store and region
+ Top-selling products
+ Low-stock product alerts
+ Gross profit per product
+
+The pipeline ensures data consistency, reliability, and scalability while being easily adaptable for both batch and real-time environments.
+
+ 2️⃣ Data Cleaning Strategy
+
+Data quality is the foundation of the ETL pipeline. Each dataset (sales, inventory, stores, products) goes through multiple validation and cleaning stages.
+
+ 2.1 Duplicate Removal
+
+ Sales data:
+  Duplicates identified using `transaction_id`.
+  If `transaction_id` missing → deduplicate based on all columns (store_id, product_id, sale_date, quantity_sold, price_sold).
+
+  > `sales.drop_duplicates()` ensures no repeated transactions.
+
+ Inventory & Products:
+  Deduplicated by `(store_id, product_id)` and `product_id`, respectively.
+
+---
+
+ 2.2 Date Standardization
+
+ Columns like `sale_date` and `last_updated` can appear in mixed formats (`YYYY-MM-DD`, `DD/MM/YYYY`, etc.).
+ Parsed using a robust conversion:
+
+  ```python
+  pd.to_datetime(column, errors='coerce', infer_datetime_format=True)
+  ```
+ Invalid or unparseable values are set to `NaT` and logged for review.
+
+---
+
+ 2.3 Text Normalization
+
+ All string columns (`store_name`, `city`, `region`, `product_name`, `category`) are:
+
+   Converted to lowercase
+   Stripped of extra spaces
+   Missing or null entries replaced with `'unknown'`
+
+  ```python
+  normalize_text = lambda s: s.fillna('Unknown').astype(str).str.strip().str.lower().str.replace(r'\s+', ' ', regex=True)
+  ```
+
+---
+
+ 2.4 Missing Value Handling
+
+ Numeric fields:
+
+   `quantity_sold` and `price_sold` → filled with `0`.
+   `cost_price` → filled with `0` if missing to avoid null calculations.
+
+ Categorical/text fields:
+
+   Product or store names → `'unknown'` to preserve referential consistency.
+
+ Date fields:
+
+   Missing timestamps are left as `NaT` (treated as unknown date).
+
+---
+
+ 2.5 Data Type Enforcement
+
+ All numeric columns are explicitly cast to the correct type:
+
+   `quantity_sold` → `int`
+   `price_sold`, `cost_price` → `float`
+   `stock_quantity` → `int`
+
+This ensures predictable aggregation behavior.
+
+---
+
+ 3️⃣ Integration Logic
+
+Once all data sources are cleaned, they are integrated into a unified schema via a series of joins.
+
+ 3.1 Data Sources
+
+| Dataset   | Primary Key              | Key Fields                                                 |
+| --------- | ------------------------ | ---------------------------------------------------------- |
+| Sales     | `transaction_id`         | store_id, product_id, sale_date, quantity_sold, price_sold |
+| Products  | `product_id`             | product_name, category, cost_price                         |
+| Stores    | `store_id`               | store_name, region, city                                   |
+| Inventory | `store_id`, `product_id` | stock_quantity, last_updated                               |
+
+---
+
+ 3.2 Join Order and Logic
+
+1. Sales → Stores
+   Join on `store_id` to enrich sales with store attributes (store name, city, region).
+   → Produces sales_with_stores.
+
+2. sales_with_stores → Products
+   Join on `product_id` to append product information (name, category, cost).
+   → Produces sales_with_products.
+
+3. sales_with_products → Inventory
+   Join on `(store_id, product_id)` to get stock levels for each product at each store.
+   → Produces the integrated_dataset.
+
+---
+
+ 3.3 Derived Fields
+
+ Revenue: `quantity_sold × price_sold`
+ Cost Total: `quantity_sold × cost_price`
+ Gross Profit: `revenue − cost_total`
+ Low Stock Flag: `stock_quantity < 10` → used to generate alerts
+
+---
+
+ 3.4 Aggregations
+
+| Metric              | Logic                                       | Output File                     |
+| ------------------- | ------------------------------------------- | ------------------------------- |
+| Sales by Store  | Group by store_id, sum revenue & quantity   | `sales_last_month_by_store.csv` |
+| Top Products    | Group by product_id, order by quantity sold | `top_5_products.csv`            |
+| Low Stock Items | Filter where stock_quantity < 10            | `low_stock_products.csv`        |
+| Gross Profit    | Group by product_id, sum(revenue−cost)      | `gross_profit_by_product.csv`   |
+
+All intermediate and final outputs are saved as `.csv` or `.parquet` in the curated zone.
+
+---
+
+ 4️⃣ Architecture Decisions
+
+ 4.1 Design Principles
+
+ Scalable:
+  Implemented in PySpark for distributed processing of millions of records.
+ Modular:
+  Each phase (ingestion, cleaning, transformation) is independent and reusable.
+ Cloud-native:
+  Easily deployable on AWS, Azure, or GCP.
+ Auditable:
+  Logs all cleaning actions (duplicates removed, nulls handled).
+ Cost-efficient:
+  Uses object storage for cheap scalability; serverless orchestration (Glue/ADF/Dataflow) for pay-per-use.
+
+---
+
+ 4.2 Layered Data Zones
+
+| Layer            | Purpose                     | Example Path                        |
+| :--------------- | :-------------------------- | :---------------------------------- |
+| Raw Zone     | Original ingested files     | `/raw/sales/2025-10-07/sales.csv`   |
+| Clean Zone   | Cleaned + standardized data | `/clean/sales_cleaned.parquet`      |
+| Curated Zone | Integrated + enriched data  | `/curated/integrated_dataset.delta` |
+
+This structure supports lineage tracking and rollback to earlier stages if needed.
+
+---
+
+ 4.3 Cloud Architecture Example (AWS)
+
+| Function             | AWS Service                     |
+| -------------------- | ------------------------------- |
+| Data Ingestion   | AWS Glue or DataSync            |
+| Storage          | S3 (Raw/Clean/Curated)          |
+| Transformation   | Glue ETL / EMR (Spark)          |
+| Metadata Catalog | AWS Glue Catalog                |
+| Analytics        | Redshift / Athena               |
+| Visualization    | QuickSight                      |
+| Orchestration    | Step Functions / Airflow (MWAA) |
+
+Data Flow:
+
+```
+CSV Sources → S3 (Raw) → Glue ETL (Cleaning & Join) → S3 (Curated) → Redshift / Athena → Dashboard
+```
+
+---
+
+ 4.4 Real-Time Extension
+
+To enable near real-time analytics:
+
+ Ingestion: Kafka or AWS Kinesis streams receive live sales events.
+ Processing: Spark Structured Streaming reads mini-batches, applies the same transformations, and writes results to Delta tables.
+ Storage: Delta Lake maintains both batch and streaming data in one unified store.
+ Visualization: Power BI / Looker Studio dashboards refresh continuously via direct connections.
+
+Benefits:
+
+ Sub-minute latency for business metrics.
+ Unified batch + streaming code (same ETL logic reused).
+ Supports anomaly detection or alerting pipelines in real time.
+
+---
+
+ 4.5 Security & Governance
+
+ Access Control: IAM / RBAC policies for least-privilege access.
+ Data Encryption: At-rest (S3 SSE / Azure Storage Encryption) and in-transit (TLS).
+ Lineage & Cataloging: AWS Glue / Azure Purview / GCP Data Catalog.
+ Monitoring: CloudWatch / Azure Monitor / Stackdriver with ETL job logs and alerts.
+
+---
+
+ ✅ Summary
+
+| Stage              | Key Outcome                                      |
+| ------------------ | ------------------------------------------------ |
+| Extraction     | Raw CSVs ingested from source systems            |
+| Cleaning       | Data standardized and validated                  |
+| Transformation | Unified schema + derived KPIs                    |
+| Aggregation    | Analytics-ready tables                           |
+| Load/Serve     | Curated data available in warehouse              |
+| (Optional)     | Real-time extension with Kafka + Spark Streaming |
+
+---
