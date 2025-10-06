@@ -114,26 +114,26 @@ Located in [`Preprocessed Datasets/`](Preprocessed Datasets/):
 - numpy
 - sqlite3 (for SQL operations)
 
-### Running the Pipeline
+### Running the Pipeline - Go inside scripts folder and run it
 
 1. **Data Cleaning:**
    ```python
-   python scripts/task1.py
+   python task1.py
    ```
 
 2. **Data Integration:**
    ```python
-   python scripts/task2.py
+   python task2.py
    ```
 
 3. **Analytics (Pandas):**
    ```python
-   python scripts/task3.py
+   python task3.py
    ```
 
 4. **Analytics (SQL):**
    ```python
-   python scripts/task4.py
+   python task4.py
    ```
 
 ## 📈 Key Business Insights
